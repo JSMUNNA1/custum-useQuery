@@ -1,0 +1,5 @@
+{
+  "name": "QueryMaster CRUD Pro",
+  "description": "A high-performance User Management dashboard demonstrating custom useQuery and useMutation hooks with caching, pagination, and real-time UI updates.",
+  "requestFramePermissions": []
+}
