@@ -50,46 +50,63 @@ function getSnapshot(queryKey: any[]) {
 // Global invalidation helper
 export function invalidateQueries(queryKey: any[]) {
   const keyStr = JSON.stringify(queryKey);
-  // Find all keys that start with this key (prefix matching)
+  const prefix = keyStr.substring(0, keyStr.length - 1);
+  
   for (const cacheKey of queryCache.keys()) {
-    if (cacheKey.startsWith(keyStr.slice(0, -1))) {
+    if (cacheKey.startsWith(prefix)) {
       const entry = queryCache.get(cacheKey);
       if (entry) {
-        entry.isStale = true;
-        // In this simple implementation, we'll just mark as stale. 
-        // Active hooks will see the update and refetch based on their useEffects.
-        const originalKey = JSON.parse(cacheKey);
-        notifyListeners(originalKey);
+        // Immutable update for invalidation
+        queryCache.set(cacheKey, { ...entry, isStale: true });
+        try {
+          const originalKey = JSON.parse(cacheKey);
+          notifyListeners(originalKey);
+        } catch (e) {}
       }
     }
   }
 }
 
-async function fetchQuery(queryKey: any[], queryFn: () => Promise<any>, entry: any) {
+async function fetchQuery(queryKey: any[], queryFn: () => Promise<any>) {
+  const keyStr = JSON.stringify(queryKey);
+  const entry = getSnapshot(queryKey);
+  
+  // Start fetching: Update cache immutably
+  queryCache.set(keyStr, {
+    ...entry,
+    isFetching: true,
+    status: entry.data ? 'success' : 'loading',
+    fetchedAt: Date.now(),
+  });
+  notifyListeners(queryKey);
+  
   try {
-    entry.isFetching = true;
-    entry.status = 'loading';
-    entry.fetchedAt = Date.now();
-    notifyListeners(queryKey);
-    
     const data = await queryFn();
     
-    entry.data = data;
-    entry.error = undefined;
-    entry.status = 'success';
-    entry.dataUpdatedAt = Date.now();
-    entry.isStale = false;
-    entry.fetchFailureCount = 0;
-    entry.isFetching = false;
+    // Success: Update cache immutably with new data
+    queryCache.set(keyStr, {
+      ...queryCache.get(keyStr), // Get latest in case of concurrent changes
+      data,
+      error: undefined,
+      status: 'success',
+      dataUpdatedAt: Date.now(),
+      isStale: false,
+      fetchFailureCount: 0,
+      isFetching: false,
+    });
     
     notifyListeners(queryKey);
     return data;
   } catch (error) {
-    entry.error = error;
-    entry.status = 'error';
-    entry.errorUpdatedAt = Date.now();
-    entry.fetchFailureCount += 1;
-    entry.isFetching = false;
+    // Error: Update cache immutably with error info
+    queryCache.set(keyStr, {
+      ...queryCache.get(keyStr),
+      error,
+      status: 'error',
+      errorUpdatedAt: Date.now(),
+      fetchFailureCount: (entry.fetchFailureCount || 0) + 1,
+      isFetching: false,
+    });
     
     notifyListeners(queryKey);
     throw error;
@@ -116,7 +133,6 @@ export function useQuery<T>(options: {
     queryKey,
     queryFn,
     staleTime = 0,
-    cacheTime = 5 * 60 * 1000,
     enabled = true,
     refetchInterval = false,
     refetchOnMount = true,
@@ -139,8 +155,7 @@ export function useQuery<T>(options: {
 
   const refetch = useCallback(async () => {
     if (!queryFn) return;
-    const entry = getSnapshot(queryKey);
-    return fetchQuery(queryKey, queryFn, entry);
+    return fetchQuery(queryKey, queryFn);
   }, [keyStr, queryFn]);
 
   const isStale = useCallback(() => {
@@ -161,7 +176,7 @@ export function useQuery<T>(options: {
       let retryCount = 0;
       const attemptFetch = async () => {
         try {
-          const data = await fetchQuery(queryKey, queryFn, entry);
+          const data = await fetchQuery(queryKey, queryFn);
           if (onSuccess) onSuccess(data);
           if (onSettled) onSettled(data, null);
         } catch (error) {
@@ -176,21 +191,20 @@ export function useQuery<T>(options: {
       };
       attemptFetch();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [keyStr, enabled, refetchOnMount]);
+  }, [keyStr, enabled, refetchOnMount, isStale, queryFn, retry, retryDelay]);
 
   useEffect(() => {
     if (!enabled || !refetchInterval || !queryFn) return;
     const interval = setInterval(() => refetch(), refetchInterval);
     return () => clearInterval(interval);
-  }, [enabled, refetchInterval, refetch]);
+  }, [enabled, refetchInterval, refetch, queryFn]);
 
   useEffect(() => {
     if (!enabled || !refetchOnWindowFocus || !queryFn) return;
     const handleFocus = () => { if (isStale()) refetch(); };
     window.addEventListener('focus', handleFocus);
     return () => window.removeEventListener('focus', handleFocus);
-  }, [enabled, refetchOnWindowFocus, refetch, isStale]);
+  }, [enabled, refetchOnWindowFocus, refetch, isStale, queryFn]);
 
   const data = select && snapshot.data ? select(snapshot.data) : snapshot.data;
 
