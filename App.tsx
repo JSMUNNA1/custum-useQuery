@@ -33,7 +33,7 @@ const App: React.FC = () => {
   const { data, isLoading, isFetching, isError, refetch } = useQuery<PaginatedResponse<User>>({
     queryKey: ['users', page, debouncedSearch],
     queryFn: () => userService.getUsers(page, 5, debouncedSearch),
-    staleTime: 60000, // 1 minute
+    staleTime: 0, // 1 minute
   });
 
   const deleteMutation = useMutation({

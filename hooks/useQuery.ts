@@ -1,5 +1,5 @@
 
-import { useSyncExternalStore, useEffect, useCallback } from 'react';
+import { useSyncExternalStore, useEffect, useCallback ,useRef } from 'react';
 
 // Global cache store
 export const queryCache = new Map<string, any>();
@@ -191,7 +191,7 @@ export function useQuery<T>(options: {
       };
       attemptFetch();
     }
-  }, [keyStr, enabled, refetchOnMount, isStale, queryFn, retry, retryDelay]);
+  }, [keyStr, enabled, refetchOnMount,isStale, retry, retryDelay]);
 
   useEffect(() => {
     if (!enabled || !refetchInterval || !queryFn) return;
