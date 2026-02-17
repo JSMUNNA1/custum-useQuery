@@ -135,7 +135,7 @@ export function useQuery<T>(options: {
     staleTime = 0,
     enabled = true,
     refetchInterval = false,
-    refetchOnMount = true,
+    refetchOnMount = false,
     refetchOnWindowFocus = false,
     retry = 3,
     retryDelay = 1000,
@@ -164,34 +164,51 @@ export function useQuery<T>(options: {
     return entry.isStale || (Date.now() - entry.dataUpdatedAt > staleTime);
   }, [keyStr, staleTime]);
 
-  useEffect(() => {
-    if (!enabled || !queryFn) return;
+ useEffect(() => {
+  if (!enabled || !queryFn) return;
 
-    const entry = getSnapshot(queryKey);
-    const shouldFetch = 
-      refetchOnMount && 
-      (entry.status === 'idle' || (isStale() && !entry.isFetching));
+  const entry = getSnapshot(queryKey);
+  const shouldFetch =
+  entry.status === 'idle' ||
+  (refetchOnMount && isStale() && !entry.isFetching);
 
-    if (shouldFetch) {
-      let retryCount = 0;
-      const attemptFetch = async () => {
-        try {
-          const data = await fetchQuery(queryKey, queryFn);
-          if (onSuccess) onSuccess(data);
-          if (onSettled) onSettled(data, null);
-        } catch (error) {
-          if (retryCount < retry) {
-            retryCount++;
-            setTimeout(attemptFetch, retryDelay * retryCount);
-          } else {
-            if (onError) onError(error);
-            if (onSettled) onSettled(undefined, error);
-          }
-        }
-      };
-      attemptFetch();
+
+  if (!shouldFetch) return;
+
+  let retryCount = 0;
+  let timeoutId: ReturnType<typeof setTimeout> | null = null;
+  let cancelled = false;
+
+  const attemptFetch = async () => {
+    if (cancelled) return;
+
+    try {
+      const data = await fetchQuery(queryKey, queryFn);
+      if (onSuccess) onSuccess(data);
+      if (onSettled) onSettled(data, null);
+    } catch (error) {
+      if (retryCount < retry && !cancelled) {
+        retryCount++;
+        timeoutId = setTimeout(
+          attemptFetch,
+          retryDelay * retryCount
+        );
+      } else {
+        if (onError) onError(error);
+        if (onSettled) onSettled(undefined, error);
+      }
     }
-  }, [keyStr, enabled, refetchOnMount,isStale, retry, retryDelay]);
+  };
+
+  attemptFetch();
+
+  return () => {
+    cancelled = true;
+    if (timeoutId) clearTimeout(timeoutId);
+  };
+
+}, [keyStr, enabled, refetchOnMount, isStale, retry, retryDelay]);
+
 
   useEffect(() => {
     if (!enabled || !refetchInterval || !queryFn) return;
